@@ -50,8 +50,10 @@ spec:
           valueFiles:
             - values-preview.yaml
           parameters:
+            # TP local : on utilise l'image déjà chargée dans kind (tag `dev`).
+            # En prod, on remettrait `{{.head_short_sha}}` après push GHCR par la CI.
             - name: image.tag
-              value: '{{.head_short_sha}}'
+              value: 'dev'
             - name: ingress.host
               value: 'annuaire-{{.branch_slug}}.devhub.local'
       destination:
