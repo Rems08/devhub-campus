@@ -1,0 +1,11 @@
+---
+ingress:
+  enabled: true
+  host: notif.devhub.local
+
+env:
+  LOG_LEVEL: debug
+
+pdb:
+  enabled: true
+  minAvailable: 1

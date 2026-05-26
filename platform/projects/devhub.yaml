@@ -1,0 +1,68 @@
+---
+# AppProject `devhub` — frontière de sécurité du projet.
+#
+# Réf : https://argo-cd.readthedocs.io/en/stable/operator-manual/project-management/
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: devhub
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Plateforme DevHub Campus
+
+  # Whitelist des dépôts Git autorisés. Tout dépôt non listé est refusé.
+  sourceRepos:
+    - https://github.com/Rems08/devhub-campus.git
+    - https://github.com/Rems08/devhub-campus
+
+  # Whitelist des destinations (cluster + namespace).
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+    - server: https://kubernetes.default.svc
+      namespace: devhub-dev
+    - server: https://kubernetes.default.svc
+      namespace: 'devhub-preview-*'
+
+  # Ressources cluster-scoped autorisées. Minimum requis : Namespace
+  # (pour CreateNamespace=true) et ClusterRole/Binding si besoin (non utilisé ici).
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  # Ressources namespace-scoped : on autorise tout (TP). En prod on restreindrait.
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # Rôles projet — combinés avec les bindings de configs.rbac.policy.csv.
+  roles:
+    - name: developer
+      description: Sync des Applications dont le préfixe correspond au service du dev
+      policies:
+        - p, proj:devhub:developer, applications, get, devhub/*, allow
+        - p, proj:devhub:developer, applications, sync, devhub/annuaire-*, allow
+        - p, proj:devhub:developer, logs, get, devhub/*, allow
+      groups:
+        - dev
+
+    - name: platform-admin
+      description: Administration complète du projet
+      policies:
+        - p, proj:devhub:platform-admin, applications, *, devhub/*, allow
+        - p, proj:devhub:platform-admin, projects, *, devhub, allow
+      groups:
+        - platform-admin
+
+  # Fenêtres de sync : DENY entre 18h et 8h du lundi au vendredi.
+  # manualSync: true autorise un humain à forcer un sync explicite via la CLI.
+  syncWindows:
+    - kind: deny
+      schedule: "0 18 * * 1-5"
+      duration: 14h
+      applications:
+        - "*"
+      manualSync: true
+      timeZone: Europe/Paris

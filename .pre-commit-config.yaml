@@ -1,0 +1,51 @@
+---
+# Pre-commit hooks : tout ce qui peut être vérifié AVANT de pousser.
+# Install : `pip install pre-commit && pre-commit install`
+# Run all  : `pre-commit run --all-files`
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: [-c, .yamllint.yml]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.1-beta
+    hooks:
+      - id: hadolint-docker
+        # ignore DL3018 (alpine package version pinning) — gérée au niveau image base
+        args: [--ignore, DL3018]
+
+  - repo: local
+    hooks:
+      - id: helm-lint
+        name: helm lint
+        entry: bash -c 'for c in annuaire-service planning-service notif-service; do helm lint "$c/chart" || exit 1; done'
+        language: system
+        pass_filenames: false
+        files: ^(annuaire-service|planning-service|notif-service)/chart/
+
+      - id: kubeconform
+        name: kubeconform (helm template | kubeconform)
+        entry: bash -c 'for c in annuaire-service planning-service notif-service; do helm template "$c/chart" -f "$c/chart/values-dev.yaml" | kubeconform -strict -ignore-missing-schemas -kubernetes-version 1.30.0 || exit 1; done'
+        language: system
+        pass_filenames: false
+        files: ^(annuaire-service|planning-service|notif-service)/chart/

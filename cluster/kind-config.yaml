@@ -1,0 +1,23 @@
+---
+# Cluster kind à 2 nœuds, ports 80/443 publiés sur l'hôte.
+# Le label `ingress-ready=true` sur le control-plane est exploité par
+# ingress-nginx pour s'y planifier (nodeSelector dans le Makefile).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: devhub
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+  - role: worker

@@ -1,0 +1,67 @@
+---
+# Values par défaut du chart annuaire.
+# Surchargées par values-dev.yaml et values-preview.yaml selon l'environnement.
+
+image:
+  repository: ghcr.io/rems08/annuaire
+  # tag par défaut vide — l'Application ArgoCD surcharge via helm.parameters
+  # (mécanisme d'image promotion par PR depuis la CI). Fallback : appVersion du Chart.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  host: annuaire.devhub.local
+  path: /
+  pathType: Prefix
+
+env:
+  LOG_LEVEL: info
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+probes:
+  readiness:
+    path: /healthz
+    initialDelaySeconds: 2
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+pdb:
+  enabled: false
+  minAvailable: 1

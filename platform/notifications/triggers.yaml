@@ -1,0 +1,26 @@
+---
+# Documentation des triggers de notification ArgoCD.
+#
+# La configuration RÉELLEMENT consommée par argocd-notifications est dans
+# `platform/argocd/values.yaml` (sous-chart `notifications`). Ce fichier
+# sert de référence et permet à un opérateur de retrouver rapidement ce qui
+# est branché.
+#
+# Réf : https://argocd-notifications.readthedocs.io/
+
+# Trigger livré :
+#   on-sync-failed
+#     condition : app.status.operationState.phase in ['Error', 'Failed']
+#     destination : webhook.site (à remplacer par Slack en prod)
+#
+# Triggers à ajouter en prod (commentés dans values.yaml) :
+#   on-deployed         — sync OK + Healthy
+#   on-health-degraded  — passage de Healthy à Degraded
+#   on-sync-running     — début de sync long (> 5 min)
+#
+# Souscription par défaut : toutes les Applications du namespace argocd.
+# Pour spécialiser, ajouter sur l'Application :
+#
+#   metadata:
+#     annotations:
+#       notifications.argoproj.io/subscribe.on-sync-failed.slack: "#oncall"

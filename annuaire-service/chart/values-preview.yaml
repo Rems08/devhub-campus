@@ -1,0 +1,20 @@
+---
+# Deltas pour les environnements éphémères (générés par ApplicationSet).
+# `ingress.host` est surchargé par l'ApplicationSet via helm.parameters
+# (`<branch-slug>.devhub.local`), donc on ne fixe pas le host ici.
+
+replicaCount: 1
+
+ingress:
+  enabled: true
+
+env:
+  LOG_LEVEL: debug
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi

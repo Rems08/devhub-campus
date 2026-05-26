@@ -1,0 +1,11 @@
+---
+ingress:
+  enabled: true
+  host: planning.devhub.local
+
+env:
+  LOG_LEVEL: debug
+
+pdb:
+  enabled: true
+  minAvailable: 1

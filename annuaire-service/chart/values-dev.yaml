@@ -1,0 +1,14 @@
+---
+# Deltas pour l'environnement devhub-dev (stable, branche main).
+# Seuls les champs qui DIFFÈRENT de values.yaml apparaissent ici.
+
+ingress:
+  enabled: true
+  host: annuaire.devhub.local
+
+env:
+  LOG_LEVEL: debug
+
+pdb:
+  enabled: true
+  minAvailable: 1

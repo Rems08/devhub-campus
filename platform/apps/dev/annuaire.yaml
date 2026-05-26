@@ -1,0 +1,43 @@
+---
+# Application ArgoCD : annuaire-dev
+# Déployée par la root Application (App of Apps).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: annuaire-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: devhub
+
+  source:
+    repoURL: https://github.com/Rems08/devhub-campus.git
+    targetRevision: main
+    path: annuaire-service/chart
+    helm:
+      valueFiles:
+        - values-dev.yaml
+      # image.tag est piloté par la CI : à chaque build vert,
+      # un PR met à jour la valeur ci-dessous (image promotion).
+      parameters:
+        - name: image.tag
+          value: "dev"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: devhub-dev
+
+  syncPolicy:
+    automated:
+      prune: false    # dev : pas de suppression auto si un manifest disparaît du chart
+      selfHeal: true  # re-applique si quelqu'un edit le cluster à la main
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m

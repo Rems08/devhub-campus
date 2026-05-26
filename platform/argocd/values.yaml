@@ -1,0 +1,116 @@
+---
+# Values Helm pour installer ArgoCD lui-même (chart argo/argo-cd).
+# Doc : https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd
+
+global:
+  domain: argocd.devhub.local
+
+configs:
+  params:
+    # Désactive le TLS interne — l'ingress-nginx est devant pour le HTTPS.
+    server.insecure: "true"
+
+  cm:
+    # Resync toutes les 3 minutes (par défaut). Si webhook Git → ArgoCD configuré,
+    # on peut monter ce timeout à 10 min sans perdre en réactivité.
+    timeout.reconciliation: 180s
+    # Compte non-admin pour tester le RBAC à l'étape 9.
+    accounts.dev: "login, apiKey"
+    accounts.dev.enabled: "true"
+    # Active argocd-notifications (sous-chart).
+    accounts.notifications: "apiKey"
+
+  # RBAC ArgoCD — voir rbac/policy.csv pour la version complète.
+  rbac:
+    policy.default: role:readonly
+    scopes: "[groups]"
+    policy.csv: |
+      # rôles
+      p, role:platform-admin, applications, *, devhub/*, allow
+      p, role:platform-admin, projects, *, devhub, allow
+      p, role:platform-admin, repositories, *, *, allow
+      p, role:platform-admin, clusters, *, *, allow
+
+      p, role:developer, applications, get, devhub/*, allow
+      p, role:developer, applications, sync, devhub/annuaire-*, allow
+      p, role:developer, logs, get, devhub/*, allow
+
+      # bindings
+      g, dev, role:developer
+
+server:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.devhub.local
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    tls: false
+
+  # Exposition des metrics Prometheus (étape 9).
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false  # nécessite Prometheus Operator ; activé si déployé
+
+controller:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+
+repoServer:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  metrics:
+    enabled: true
+
+applicationSet:
+  enabled: true
+
+# argocd-notifications (sous-chart) — voir platform/notifications/triggers.yaml
+notifications:
+  enabled: true
+  argocdUrl: https://argocd.devhub.local
+  notifiers:
+    service.webhook.webhook-site: |
+      url: https://webhook.site/REMPLACER-PAR-VOTRE-UUID
+      headers:
+        - name: Content-Type
+          value: application/json
+  triggers:
+    trigger.on-sync-failed: |
+      - description: Application sync has failed
+        send: [app-sync-failed]
+        when: app.status.operationState.phase in ['Error', 'Failed']
+  templates:
+    template.app-sync-failed: |
+      message: |
+        Application {{.app.metadata.name}} sync failed on revision {{.app.status.sync.revision}}.
+        Reason: {{.app.status.operationState.message}}
+      webhook:
+        webhook-site:
+          method: POST
+          body: |
+            {
+              "app": "{{.app.metadata.name}}",
+              "revision": "{{.app.status.sync.revision}}",
+              "message": {{toJson .app.status.operationState.message}}
+            }
+  subscriptions:
+    - recipients:
+        - webhook:webhook-site
+      triggers:
+        - on-sync-failed

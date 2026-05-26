@@ -1,0 +1,53 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: notif-preview
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    - pullRequest:
+        github:
+          owner: Rems08
+          repo: devhub-campus
+          tokenRef:
+            secretName: github-token
+            key: token
+          labels:
+            - preview
+        requeueAfterSeconds: 60
+
+  template:
+    metadata:
+      name: 'notif-preview-{{.branch_slug}}'
+      labels:
+        devhub.io/env: preview
+        devhub.io/service: notif
+        devhub.io/pr: '{{.number}}'
+    spec:
+      project: devhub
+      source:
+        repoURL: https://github.com/Rems08/devhub-campus.git
+        targetRevision: '{{.branch}}'
+        path: notif-service/chart
+        helm:
+          valueFiles:
+            - values-preview.yaml
+          parameters:
+            - name: image.tag
+              value: '{{.head_short_sha}}'
+            - name: ingress.host
+              value: 'notif-{{.branch_slug}}.devhub.local'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'devhub-preview-{{.branch_slug}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

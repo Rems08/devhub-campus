@@ -1,0 +1,29 @@
+# Documentation des rôles RBAC ArgoCD.
+#
+# La policy.csv RÉELLEMENT consommée par ArgoCD est dans
+# `platform/argocd/values.yaml` sous `configs.rbac.policy.csv`. Ce fichier
+# sert de référence statique (lecture humaine + diff facile).
+#
+# Syntaxe : https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/
+#
+# Format des lignes :
+#   p, <subject>, <resource>, <action>, <object>, <effect>
+#   g, <user>, <role>
+
+# ---- rôles ----
+p, role:platform-admin, applications, *, devhub/*, allow
+p, role:platform-admin, projects, *, devhub, allow
+p, role:platform-admin, repositories, *, *, allow
+p, role:platform-admin, clusters, *, *, allow
+
+p, role:developer, applications, get, devhub/*, allow
+p, role:developer, applications, sync, devhub/annuaire-*, allow
+p, role:developer, logs, get, devhub/*, allow
+
+# ---- bindings ----
+# Compte local `dev` (déclaré dans configs.cm.accounts.dev) → role:developer
+g, dev, role:developer
+
+# Quand OIDC sera branché, on remplace les bindings utilisateurs par des bindings de groupes :
+#   g, group:engineering-platform, role:platform-admin
+#   g, group:engineering-app, role:developer

@@ -1,0 +1,8 @@
+---
+replicaCount: 1
+
+ingress:
+  enabled: true
+
+env:
+  LOG_LEVEL: debug
