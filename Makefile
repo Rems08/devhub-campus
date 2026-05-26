@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 # ---- Versions pinées (reproductibilité) ----
 CLUSTER ?= devhub
-ARGOCD_CHART_VERSION ?= 7.6.12
+ARGOCD_CHART_VERSION ?= 9.5.15
 INGRESS_CHART_VERSION ?= 4.11.3
 KUBECONFORM_K8S_VERSION ?= 1.30.0
 
