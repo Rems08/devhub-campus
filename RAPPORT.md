@@ -142,6 +142,22 @@ multi-env.
 Sync policy retenue : **manuel d'abord**, puis bascule en auto avec
 `selfHeal: true` + `prune: false` une fois la première sync validée.
 
+### Rotation du mot de passe admin (obligatoire)
+
+Le mot de passe `admin` initial est généré par le chart dans le secret
+`argocd-initial-admin-secret`. Il a été **rotaté** dès la première connexion :
+
+```sh
+argocd login argocd.devhub.local --insecure --username admin \
+  --password "$(kubectl -n argocd get secret argocd-initial-admin-secret \
+                 -o jsonpath='{.data.password}' | base64 -d)"
+argocd account update-password            # nouveau mot de passe admin
+```
+
+Le secret initial peut ensuite être supprimé (`kubectl -n argocd delete secret
+argocd-initial-admin-secret`). Le mot de passe réel n'est pas consigné ici :
+un identifiant ne se commite pas dans Git — il est conservé hors dépôt.
+
 ### `selfHeal: true` vs `prune: true` — quand chacun est dangereux
 
 | Option | Comportement | Cas où c'est dangereux |
