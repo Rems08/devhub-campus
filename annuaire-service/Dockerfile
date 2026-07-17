@@ -4,7 +4,7 @@
 # LABEL org.opencontainers.image.source, /healthz, LOG_LEVEL.
 
 # ---- Stage 1 : install des dépendances de prod uniquement ----
-FROM node:20.18-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN npm install --omit=dev --no-audit --no-fund \
 COPY src ./src
 
 # ---- Stage 2 : image runtime minimale ----
-FROM node:20.18-alpine AS runtime
+FROM node:22-alpine AS runtime
 
 # OCI labels — traçabilité dans GHCR + outils SBOM
 LABEL org.opencontainers.image.source="https://github.com/Rems08/devhub-campus" \
@@ -35,6 +35,11 @@ WORKDIR /app
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/src ./src
 COPY --chown=app:app package.json ./
+
+# npm n'est pas nécessaire au runtime (on lance `node src/index.js`) et embarque
+# ses propres dépendances vulnérables (picomatch, sigstore…). On le retire :
+# durcissement + surface d'attaque réduite.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 USER 1001
 

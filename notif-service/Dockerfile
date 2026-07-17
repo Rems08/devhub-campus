@@ -2,7 +2,7 @@
 # Multi-stage build pour notif-service (Go). Cible image ≤ 50 Mo.
 
 # ---- Stage 1 : build statique ----
-FROM golang:1.22-alpine AS build
+FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 
