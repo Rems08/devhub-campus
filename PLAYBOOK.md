@@ -8,6 +8,29 @@
 
 ---
 
+## ⚠️ Si les URLs `*.devhub.local` ne répondent pas (HTTP 000)
+
+Le cluster tourne dans **Colima** (kind-in-Docker), et l'accès `127.0.0.1:80/443`
+passe par un **tunnel SSH de port-forward Colima**. Ce tunnel casse à **chaque
+changement de réseau** (Wi-Fi, VPN, Netskope on/off). Symptôme : `curl` renvoie
+`HTTP 000` alors que les pods sont `Running`.
+
+```sh
+# le cluster va bien en interne ? (doit répondre 200)
+colima ssh -- curl -s -o /dev/null -w "%{http_code}\n" -H "Host: annuaire.devhub.local" http://localhost/healthz
+
+# réparer le port-forward (sur un réseau STABLE), puis ATTENDRE ~30 s :
+colima restart
+sleep 30
+curl -s http://annuaire.devhub.local/healthz     # doit renvoyer le JSON
+```
+
+> À faire **avant** la soutenance, une fois connecté au réseau définitif —
+> et ne plus changer de réseau ensuite. `kubectl`/`argocd` (port API) ne sont
+> pas affectés, seul l'accès HTTP aux services l'est.
+
+---
+
 ## 0. Préparation (à lancer une fois, avant de présenter)
 
 ```sh
