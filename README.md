@@ -20,40 +20,80 @@ des `path:` différents (ex : `path: annuaire-service/chart`,
 
 ## Démarrage rapide (≈ 10 min)
 
+> **Prérequis** : Docker démarré, et `gh auth login` fait (le token GitHub est
+> nécessaire au `pullRequest` generator de l'étape 7).
+
 ```sh
-# 1. outillage local
+# 1. outillage local (docker, kubectl, helm, kind, argocd, git, yq)
 make tools-check
 
 # 2. cluster Kubernetes local (kind, 2 nœuds)
 make cluster-up
 
-# 3. images des 3 services → GHCR
-make images
+# 3. build des 3 images + chargement DANS kind (tags :sha ET :dev, + busybox)
+#    Les images ne sont PAS publiées sur GHCR : le cluster les consomme
+#    localement. `make images` seul ne suffit pas — il ne fait que builder.
+make images-load-kind
 
 # 4. ingress-nginx + ArgoCD via Helm
 make argocd-install
 
-# 5. hosts file (à ajouter manuellement)
+# 5. hosts file (à ajouter manuellement, avec sudo)
 make hosts-print
 
-# 6. mot de passe admin initial
+# 6. mot de passe admin initial (à rotater — cf. RAPPORT.md étape 5)
 make argocd-password
 
 # 7. UNIQUE kubectl apply du TP : la root Application
+#    (crée aussi le Secret github-token via la dépendance `preview-token`)
 make bootstrap
 ```
 
 Ouvrez ensuite https://argocd.devhub.local. Quatre Applications doivent
 apparaître : `root`, `annuaire-dev`, `planning-dev`, `notif-dev`, toutes en
-*Synced + Healthy*.
+*Synced + Healthy*, plus trois `ApplicationSet` de preview.
 
-## Démos (étapes 7, 8, 9)
+Vue d'ensemble à tout moment :
 
 ```sh
-make demo-preview    # pousse une branche feature pour faire apparaître une preview
-make demo-drift      # provoque un drift puis observe le selfHeal
-make demo-rollback   # bump d'image puis git revert, mesure du time-to-converge
+make demo-status
 ```
+
+## Ordre de démo conseillé
+
+| # | Commande | Ce que le formateur doit voir |
+|---|---|---|
+| 1 | `make demo-status` | 4 Applications *Synced + Healthy* |
+| 2 | `make demo-waves` | hook PreSync → ConfigMap (wave -1) → Deployment (wave 0) |
+| 3 | `make demo-hook-logs` | le Job de migration logge `migration ok` |
+| 4 | `make demo-preview-close` | la preview et son namespace disparaissent (~60 s) |
+| 5 | `make demo-preview-open` | la preview réapparaît (~60 s) — **étape 7, 18 % de la note** |
+| 6 | `make demo-drift` | *OutOfSync* puis `selfHeal` ramène à 2 replicas |
+| 7 | `make demo-break` | *Synced + Degraded* (`ImagePullBackOff`) |
+| 8 | `make demo-rollback` | `git revert` → retour *Healthy* (chronométrez) |
+| 9 | `make demo-hook-fail` | hook PreSync en échec → sync **bloquée** + notification |
+| 10 | `make demo-hook-fix` | réparation **uniquement via Git** |
+| 11 | `make demo-syncwindow` | fenêtre `deny` 18h→8h (défi bonus étape 6) |
+
+Toutes ces cibles sont **rejouables** : on peut les enchaîner sans remettre la
+plateforme à zéro.
+
+> **Attention — sync window.** L'`AppProject` interdit les syncs automatiques
+> entre 18h et 8h du lundi au vendredi (défi bonus de l'étape 6). Si vous
+> démontrez en soirée, l'auto-sync ne partira pas : forcez avec
+> `argocd app sync <app>` (`manualSync: true` l'autorise) et expliquez la
+> fenêtre — c'est un point bonus, pas une panne.
+
+## Points à finaliser avant la soutenance
+
+- [ ] **webhook.site** : remplacer `REMPLACER-PAR-VOTRE-UUID` dans
+      `platform/argocd/values.yaml` par un vrai UUID, puis
+      `make argocd-install` et `make demo-hook-fail` pour la capture d'écran
+      demandée à l'étape 9.
+- [ ] **Rotation du mot de passe admin** : `argocd account update-password`
+      (exigé par l'étape 5, à documenter dans `RAPPORT.md`).
+- [ ] **Compte `dev`** : lui donner un mot de passe pour démontrer le RBAC —
+      `argocd account update-password --account dev --new-password <...>`.
 
 ## Pratiques DevOps appliquées
 

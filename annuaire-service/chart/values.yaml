@@ -65,3 +65,20 @@ probes:
 pdb:
   enabled: false
   minAvailable: 1
+
+# ConfigMap applicatif, appliqué en sync-wave -1 (avant le Deployment).
+# Consommé par le Deployment via envFrom — étape 8 du polycopié.
+config:
+  enabled: true
+  greeting: "Bienvenue sur DevHub Campus"
+  env: dev
+
+# Job de migration exécuté en hook PreSync avant chaque sync (étape 8).
+# `fail: true` casse volontairement la migration pour démontrer qu'un hook
+# PreSync en échec BLOQUE la sync (et déclenche la notif on-sync-failed).
+migration:
+  enabled: true
+  image: busybox:1.36
+  durationSeconds: 3
+  backoffLimit: 1
+  fail: false

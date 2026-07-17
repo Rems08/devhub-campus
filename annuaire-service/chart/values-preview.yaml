@@ -11,6 +11,10 @@ ingress:
 env:
   LOG_LEVEL: debug
 
+config:
+  env: preview
+  greeting: "Preview éphémère — DevHub Campus"
+
 resources:
   requests:
     cpu: 25m

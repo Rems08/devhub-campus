@@ -1,0 +1,54 @@
+---
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "notif.fullname" . }}-migration
+  labels:
+    {{- include "notif.labels" . | nindent 4 }}
+  annotations:
+    # Hook PreSync : exécuté AVANT toute ressource de la phase Sync.
+    # Un échec de ce Job BLOQUE la sync — c'est voulu : on ne déploie pas
+    # du code applicatif sur un schéma de base non migré.
+    argocd.argoproj.io/hook: PreSync
+    # Sans cette policy, la 2e sync échoue : un Job est immutable sur son
+    # `spec.template`, donc ArgoCD doit supprimer l'ancien avant de recréer.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "notif.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migration
+          image: {{ .Values.migration.image | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "[migration] service   = {{ include "notif.fullname" . }}"
+              echo "[migration] chart     = {{ .Chart.Version }}"
+              echo "[migration] env       = {{ .Values.config.env }}"
+              echo "[migration] application du schéma..."
+              sleep {{ .Values.migration.durationSeconds }}
+              {{- if .Values.migration.fail }}
+              echo "[migration] ÉCHEC VOLONTAIRE (migration.fail=true)" >&2
+              exit 1
+              {{- end }}
+              echo "migration ok"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+{{- end }}

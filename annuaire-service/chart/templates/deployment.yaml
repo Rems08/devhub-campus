@@ -5,6 +5,9 @@ metadata:
   name: {{ include "annuaire.fullname" . }}
   labels:
     {{- include "annuaire.labels" . | nindent 4 }}
+  annotations:
+    # Wave 0 (défaut explicite) : appliqué APRÈS le ConfigMap en wave -1.
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   replicas: {{ .Values.replicaCount }}
   revisionHistoryLimit: 5
@@ -38,6 +41,13 @@ spec:
               value: {{ .Values.service.targetPort | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.env.LOG_LEVEL | quote }}
+          {{- if .Values.config.enabled }}
+          # Consommation du ConfigMap appliqué en sync-wave -1. S'il manque,
+          # le pod ne démarre pas — c'est ce qui rend l'ordre des waves visible.
+          envFrom:
+            - configMapRef:
+                name: {{ include "annuaire.fullname" . }}-config
+          {{- end }}
           readinessProbe:
             httpGet:
               path: {{ .Values.probes.readiness.path }}

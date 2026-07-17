@@ -1,0 +1,21 @@
+---
+{{- if .Values.config.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "notif.fullname" . }}-config
+  labels:
+    {{- include "notif.labels" . | nindent 4 }}
+  annotations:
+    # Sync wave -1 : ArgoCD applique ce ConfigMap AVANT le Deployment (wave 0).
+    # Le Deployment le consomme via `envFrom` : si le ConfigMap est absent ou
+    # invalide, les pods restent en CreateContainerConfigError et ne démarrent
+    # jamais. C'est exactement la démonstration attendue à l'étape 8.
+    #
+    # Sync wave ≠ hook : la wave ordonne les ressources DANS la phase Sync,
+    # le hook s'exécute AVANT ou APRÈS cette phase.
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  APP_GREETING: {{ .Values.config.greeting | quote }}
+  APP_ENV: {{ .Values.config.env | quote }}
+{{- end }}

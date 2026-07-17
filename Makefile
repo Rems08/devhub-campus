@@ -8,8 +8,17 @@ INGRESS_CHART_VERSION ?= 4.11.3
 KUBECONFORM_K8S_VERSION ?= 1.30.0
 
 GHCR_USER ?= rems08
+GH_REPO ?= Rems08/devhub-campus
 SERVICES := annuaire planning notif
 SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+
+# Image du hook PreSync de migration (busybox : `notif` est distroless, pas de shell).
+# Préchargée dans kind pour que la démo ne dépende pas du réseau.
+MIGRATION_IMAGE ?= busybox:1.36
+
+# Démo étape 7 — PR de preview
+DEMO_BRANCH ?= feature/demo-prof
+DEMO_PR ?= 1
 
 # ---- Outillage ----
 REQUIRED_TOOLS := docker kubectl helm kind argocd git yq
@@ -71,8 +80,20 @@ argocd-password:  ## affiche le mot de passe admin initial (À ROTATER)
 	@kubectl -n argocd get secret argocd-initial-admin-secret \
 		-o jsonpath='{.data.password}' | base64 -d; echo
 
+.PHONY: preview-token
+preview-token:  ## crée le Secret github-token requis par l'ApplicationSet (étape 7)
+	@TOKEN="$${GITHUB_TOKEN:-$$(gh auth token 2>/dev/null)}"; \
+	if [ -z "$$TOKEN" ]; then \
+		echo "❌ token GitHub introuvable — faites 'gh auth login' ou exportez GITHUB_TOKEN"; \
+		exit 1; \
+	fi; \
+	kubectl -n argocd create secret generic github-token \
+		--from-literal=token="$$TOKEN" \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✅ secret github-token en place — le pullRequest generator peut interroger l'API"
+
 .PHONY: bootstrap
-bootstrap:  ## SEUL kubectl apply du TP : crée la root Application
+bootstrap: preview-token  ## SEUL kubectl apply du TP : crée la root Application
 	kubectl apply -f platform/projects/devhub.yaml
 	kubectl apply -f platform/bootstrap/root-app.yaml
 	@echo "✅ root Application créée — observez la propagation dans l'UI ArgoCD"
@@ -121,13 +142,24 @@ images-scan:  ## scan trivy des 3 images (HIGH/CRITICAL bloquant)
 images-load-kind: images  ## charge les images locales dans le cluster kind (évite GHCR pour la démo TP)
 	@for svc in $(SERVICES); do \
 		kind load docker-image ghcr.io/$(GHCR_USER)/$$svc:$(SHA) --name $(CLUSTER); \
+		kind load docker-image ghcr.io/$(GHCR_USER)/$$svc:dev --name $(CLUSTER); \
 	done
+	@# Les Applications dev ET preview demandent le tag `dev` : sans ce chargement,
+	@# les pods partent en ImagePullBackOff (l'image n'est pas publiée sur GHCR).
+	@docker pull $(MIGRATION_IMAGE) >/dev/null 2>&1 || true
+	kind load docker-image $(MIGRATION_IMAGE) --name $(CLUSTER)
+	@echo "✅ images $(SHA) + dev + $(MIGRATION_IMAGE) chargées dans kind-$(CLUSTER)"
 
 # ---- Lint local ----
 .PHONY: lint
 lint:  ## helm lint + yamllint + hadolint sur tout le repo
+	@# On lint AVEC chaque fichier de values : linter les values par défaut
+	@# laisse passer les bugs des templates gardés par un `if` (ingress, pdb).
 	@for c in annuaire-service planning-service notif-service; do \
-		echo ">>> helm lint $$c/chart"; helm lint $$c/chart || exit 1; \
+		for v in values-dev values-preview; do \
+			echo ">>> helm lint $$c/chart ($$v)"; \
+			helm lint $$c/chart -f $$c/chart/$$v.yaml || exit 1; \
+		done; \
 	done
 	@yamllint -c .yamllint.yml . || true
 	@for d in annuaire-service planning-service notif-service; do \
@@ -145,20 +177,117 @@ kubeconform:  ## rendu Helm + validation manifestes
 	done
 
 # ---- Démos pédagogiques ----
-.PHONY: demo-preview
-demo-preview:  ## pousse une branche feature/demo-prof pour faire apparaître une preview
-	git checkout -b feature/demo-prof
-	@sed -i.bak 's/replicaCount: 1/replicaCount: 2/' annuaire-service/chart/values-preview.yaml || true
-	@rm -f annuaire-service/chart/values-preview.yaml.bak
-	git add annuaire-service/chart/values-preview.yaml
-	git commit -m "demo: scale annuaire preview à 2"
-	git push -u origin feature/demo-prof
-	@echo "✅ branche poussée — attendez ≤ 3 min pour voir la preview apparaître dans l'UI"
+# Toutes les cibles ci-dessous sont REJOUABLES : vous pouvez les enchaîner
+# plusieurs fois sans remettre la plateforme à zéro.
+
+.PHONY: demo-status
+demo-status:  ## vue d'ensemble : Applications, previews, pods (à garder ouvert pendant la démo)
+	@echo "──────── Applications ────────"
+	@kubectl -n argocd get applications -o custom-columns=\
+NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REV:.status.sync.revision 2>/dev/null
+	@echo "──────── ApplicationSets ────────"
+	@kubectl -n argocd get applicationsets 2>/dev/null
+	@echo "──────── Namespaces devhub ────────"
+	@kubectl get ns -l kubernetes.io/metadata.name --no-headers 2>/dev/null | awk '/devhub/ {print $$1}'
+	@echo "──────── Pods dev ────────"
+	@kubectl -n devhub-dev get pods 2>/dev/null
+
+# ---- Étape 7 : previews éphémères ----
+# L'ApplicationSet utilise le pullRequest generator filtré sur le label `preview`.
+# La démo la plus lisible consiste donc à fermer / rouvrir la PR devant le formateur.
+
+.PHONY: demo-preview-open
+demo-preview-open:  ## étape 7 : (r)ouvre la PR de démo + label `preview` → la preview apparaît (~60 s)
+	-gh pr reopen $(DEMO_PR) --repo $(GH_REPO)
+	gh pr edit $(DEMO_PR) --repo $(GH_REPO) --add-label preview
+	@echo "✅ PR #$(DEMO_PR) ouverte et labellisée — l'Application annuaire-preview-* apparaît sous ~60 s"
+	@echo "   surveillez : watch kubectl -n argocd get applications"
+
+.PHONY: demo-preview-close
+demo-preview-close:  ## étape 7 : ferme la PR de démo → la preview est prunée (~60 s)
+	gh pr close $(DEMO_PR) --repo $(GH_REPO)
+	@echo "✅ PR #$(DEMO_PR) fermée — l'Application preview et son namespace disparaissent sous ~60 s"
+
+.PHONY: demo-preview-branch
+demo-preview-branch:  ## étape 7 (variante) : pousse un commit sur la branche de démo
+	git checkout $(DEMO_BRANCH) 2>/dev/null || git checkout -b $(DEMO_BRANCH)
+	git commit --allow-empty -m "demo: nouveau commit sur la branche de preview"
+	git push -u origin $(DEMO_BRANCH)
+	@echo "✅ commit poussé — la preview se re-synchronise sous ~60 s"
+
+# ---- Étape 8 : drift, rollback, hooks, waves ----
 
 .PHONY: demo-drift
-demo-drift:  ## scale manuellement un deploy hors-Git pour provoquer un drift
+demo-drift:  ## étape 8 : scale hors-Git → OutOfSync puis selfHeal ramène à 2
 	kubectl -n devhub-dev scale deploy annuaire-dev-annuaire --replicas=5
-	@echo "✅ drift provoqué — l'UI ArgoCD va passer en OutOfSync, puis selfHeal ramènera à 2"
+	@echo "✅ drift provoqué — l'UI passe OutOfSync, puis selfHeal ramène à 2"
+	@echo "   surveillez : kubectl -n devhub-dev get deploy annuaire-dev-annuaire -w"
+
+.PHONY: demo-break
+demo-break:  ## étape 8 : pousse un image.tag inexistant → Synced + Degraded (ImagePullBackOff)
+	yq -i '(.spec.source.helm.parameters[] | select(.name == "image.tag") | .value) = "v0-nexiste-pas"' \
+		platform/apps/dev/annuaire.yaml
+	git add platform/apps/dev/annuaire.yaml
+	git commit -m "demo(etape 8): bump annuaire vers un tag inexistant"
+	git push
+	@echo "⏱  CHRONO — ArgoCD sync sous ≤ 180 s : Synced + Degraded (ImagePullBackOff)"
+	@echo "   pour accélérer : argocd app sync annuaire-dev"
+
+.PHONY: demo-rollback
+demo-rollback:  ## étape 8 : git revert du commit fautif → retour Healthy (mesure du time-to-converge)
+	git revert --no-edit HEAD
+	git push
+	@echo "⏱  CHRONO — un rollback = un commit. ArgoCD re-sync → annuaire-dev revient Healthy"
+	@echo "   pour accélérer : argocd app sync annuaire-dev"
+
+.PHONY: demo-hook-fail
+demo-hook-fail:  ## étape 8/9 : casse le hook PreSync → la sync est BLOQUÉE + notif on-sync-failed
+	yq -i '.migration.fail = true' annuaire-service/chart/values-dev.yaml
+	git add annuaire-service/chart/values-dev.yaml
+	git commit -m "demo(etape 8): hook PreSync en echec volontaire"
+	git push
+	@echo "⏱  le Job de migration échoue → la phase Sync ne démarre JAMAIS"
+	@echo "   logs : kubectl -n devhub-dev logs job/annuaire-dev-annuaire-migration"
+	@echo "   c'est aussi ce qui déclenche la notification webhook (étape 9)"
+
+.PHONY: demo-hook-fix
+demo-hook-fix:  ## étape 8 : répare le hook PreSync (uniquement via Git)
+	yq -i '.migration.fail = false' annuaire-service/chart/values-dev.yaml
+	git add annuaire-service/chart/values-dev.yaml
+	git commit -m "demo(etape 8): repare le hook PreSync"
+	git push
+	@echo "✅ correction poussée — la sync repart et le Deployment se déploie"
+
+.PHONY: demo-waves
+demo-waves:  ## étape 8 : montre l'ordre des waves (ConfigMap -1 avant Deployment 0)
+	@echo "──────── ordre d'application rendu par Helm ────────"
+	@helm template annuaire-dev annuaire-service/chart -f annuaire-service/chart/values-dev.yaml \
+		| grep -B4 "sync-wave\|argocd.argoproj.io/hook" | grep -A4 "kind:\|annotations:" || true
+	@echo ""
+	@echo "──────── ce qu'ArgoCD a réellement exécuté ────────"
+	@kubectl -n devhub-dev get configmap,job,deploy \
+		-l app.kubernetes.io/instance=annuaire-dev 2>/dev/null
+	@echo ""
+	@echo "Hook PreSync (migration) → puis wave -1 (ConfigMap) → puis wave 0 (Deployment)"
+
+.PHONY: demo-hook-logs
+demo-hook-logs:  ## étape 8 : logs du hook PreSync (doit afficher « migration ok »)
+	kubectl -n devhub-dev logs job/annuaire-dev-annuaire-migration 2>/dev/null \
+		|| echo "job déjà nettoyé (ttlSecondsAfterFinished=300) — relancez une sync"
+
+# ---- Étape 6 (bonus) : sync window ----
+
+.PHONY: demo-syncwindow
+demo-syncwindow:  ## étape 6 bonus : montre la fenêtre de sync (deny 18h→8h en semaine)
+	@echo "──────── fenêtres déclarées sur l'AppProject devhub ────────"
+	@kubectl -n argocd get appproject devhub -o jsonpath='{.spec.syncWindows}' | yq -P
+	@echo ""
+	@echo "──────── état courant vu par ArgoCD ────────"
+	@argocd proj windows list devhub 2>/dev/null || echo "(connectez-vous : argocd login argocd.devhub.local --insecure)"
+	@echo ""
+	@echo "Heure locale : $$(date '+%A %H:%M %Z')"
+	@echo "deny 18h→8h lun-ven, manualSync autorisé : un 'argocd app sync' explicite passe,"
+	@echo "mais l'auto-sync est suspendu. C'est le défi bonus de l'étape 6."
 
 # ---- Nettoyage ----
 .PHONY: clean
