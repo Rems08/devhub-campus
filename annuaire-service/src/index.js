@@ -21,7 +21,7 @@ const students = [
 
 const app = express();
 
-app.get('/healthz', (_, res) => res.json({ ok: true, service: 'annuaire' }));
+app.get('/healthz', (_, res) => res.json({ ok: true, service: 'annuaire', preview: 'demo-prof-coucou' }));
 app.get('/students', (_, res) => res.json(students));
 app.get('/students/:id', (req, res) => {
   const found = students.find((s) => s.id === parseInt(req.params.id, 10));

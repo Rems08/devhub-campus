@@ -3,7 +3,7 @@
 # `ingress.host` est surchargé par l'ApplicationSet via helm.parameters
 # (`<branch-slug>.devhub.local`), donc on ne fixe pas le host ici.
 
-replicaCount: 1
+replicaCount: 3
 
 ingress:
   enabled: true
