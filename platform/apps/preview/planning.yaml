@@ -38,7 +38,7 @@ spec:
             - values-preview.yaml
           parameters:
             - name: image.tag
-              value: 'dev'
+              value: 'preview-{{.branch_slug}}'
             - name: ingress.host
               value: 'planning-{{.branch_slug}}.devhub.local'
       destination:

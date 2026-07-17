@@ -21,7 +21,7 @@ DEMO_BRANCH ?= feature/demo-prof
 DEMO_PR ?= 1
 
 # ---- Outillage ----
-REQUIRED_TOOLS := docker kubectl helm kind argocd git yq
+REQUIRED_TOOLS := docker kubectl helm kind argocd git jq openssl
 
 .PHONY: help
 help:  ## affiche cette aide
@@ -54,7 +54,10 @@ cluster-down:  ## détruit le cluster kind
 argocd-install:  ## installe ingress-nginx + ArgoCD via Helm
 	helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
 	helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
-	helm repo update
+	@# On ne met à jour QUE nos deux dépôts : `helm repo update` sans argument
+	@# rafraîchit tous les dépôts du poste et échoue en bloc si l'un d'eux est
+	@# mort (typiquement un vieux bitnami), ce qui ferait échouer l'install.
+	helm repo update argo ingress-nginx
 	helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
 		--namespace ingress-nginx --create-namespace \
 		--version $(INGRESS_CHART_VERSION) \
@@ -74,6 +77,33 @@ argocd-install:  ## installe ingress-nginx + ArgoCD via Helm
 		--version $(ARGOCD_CHART_VERSION) \
 		-f platform/argocd/values.yaml
 	kubectl -n argocd rollout status deploy/argocd-server --timeout=180s
+	@# Doit passer APRÈS le helm upgrade : le chart gère argocd-tls-certs-cm et
+	@# écraserait la CA épinglée.
+	$(MAKE) trust-ca
+
+.PHONY: trust-ca
+trust-ca:  ## fait confiance à la CA qui signe github.com (indispensable derrière un proxy TLS type Netskope/Zscaler)
+	@# Un proxy d'inspection TLS d'entreprise ré-signe les certificats. Le
+	@# repo-server ne reconnaît alors plus github.com et la root Application
+	@# reste en `Unknown` : « x509: certificate signed by unknown authority ».
+	@# On épingle donc la chaîne réellement présentée pour github.com (tout sauf
+	@# le leaf) dans argocd-tls-certs-cm. Sans proxy, cette chaîne est celle de
+	@# GitHub : la cible est correcte dans les deux cas.
+	@# Rien n'est commité : la CA est lue à chaud sur le poste.
+	@CHAIN=$$(mktemp -t corpca.XXXXXX); \
+	echo | openssl s_client -connect github.com:443 -servername github.com -showcerts 2>/dev/null \
+		| awk '/-----BEGIN CERTIFICATE-----/{n++} n>1' \
+		| awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' > $$CHAIN; \
+	if ! grep -q "BEGIN CERTIFICATE" $$CHAIN; then \
+		echo "❌ impossible de récupérer la chaîne TLS de github.com (réseau ?)"; rm -f $$CHAIN; exit 1; \
+	fi; \
+	echo "  CA épinglée : $$(openssl x509 -in $$CHAIN -noout -issuer | sed 's/.*CN *= *\([^,]*\).*/\1/')"; \
+	kubectl -n argocd patch configmap argocd-tls-certs-cm --type merge \
+		--patch "$$(jq -n --rawfile ca $$CHAIN '{data:{"github.com":$$ca}}')" >/dev/null; \
+	rm -f $$CHAIN
+	@kubectl -n argocd rollout restart deploy/argocd-repo-server >/dev/null
+	@kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=120s >/dev/null
+	@echo "✅ CA de github.com approuvée par le repo-server"
 
 .PHONY: argocd-password
 argocd-password:  ## affiche le mot de passe admin initial (À ROTATER)
@@ -146,11 +176,38 @@ images-load-kind: images  ## charge les images locales dans le cluster kind (év
 	done
 	@# Les Applications dev ET preview demandent le tag `dev` : sans ce chargement,
 	@# les pods partent en ImagePullBackOff (l'image n'est pas publiée sur GHCR).
-	@docker pull $(MIGRATION_IMAGE) >/dev/null 2>&1 || true
-	kind load docker-image $(MIGRATION_IMAGE) --name $(CLUSTER)
+	@docker pull -q $(MIGRATION_IMAGE) >/dev/null 2>&1 || true
+	@# `kind load docker-image` échoue sur les images multi-arch de Docker Hub :
+	@# il importe avec --all-platforms alors que seule la plateforme locale a été
+	@# tirée, d'où un « content digest not found ». On passe donc par une archive
+	@# mono-plateforme.
+	@ARCH=$$(docker version --format '{{.Server.Arch}}'); \
+	TAR=$$(mktemp -t migration-image.XXXXXX); \
+	docker save --platform linux/$$ARCH $(MIGRATION_IMAGE) -o $$TAR && \
+	kind load image-archive $$TAR --name $(CLUSTER) && rm -f $$TAR
 	@echo "✅ images $(SHA) + dev + $(MIGRATION_IMAGE) chargées dans kind-$(CLUSTER)"
 
 # ---- Lint local ----
+.PHONY: preview-image
+preview-image:  ## build les images de la branche de démo et les charge dans kind (tag preview-<slug>)
+	@# Les ApplicationSets de preview demandent le tag `preview-<branch_slug>` :
+	@# sans ces images, les previews partent en ImagePullBackOff.
+	@# En production, la CI construirait et pousserait l'image à l'ouverture de
+	@# la PR ; ici on émule ce maillon localement.
+	@# On build depuis un worktree de la branche pour ne pas toucher à l'arbre
+	@# de travail courant — c'est bien le CODE DE LA BRANCHE qui est packagé.
+	@SLUG=$$(echo "$(DEMO_BRANCH)" | tr '/' '-' | tr '[:upper:]' '[:lower:]'); \
+	WT=$$(mktemp -d -t preview-src.XXXXXX); rm -rf $$WT; \
+	git worktree add -f --detach $$WT $(DEMO_BRANCH) >/dev/null 2>&1 || \
+		{ echo "❌ branche $(DEMO_BRANCH) introuvable"; exit 1; }; \
+	for svc in $(SERVICES); do \
+		echo ">>> build $$svc depuis $(DEMO_BRANCH) → tag preview-$$SLUG"; \
+		docker build -q -t ghcr.io/$(GHCR_USER)/$$svc:preview-$$SLUG $$WT/$$svc-service >/dev/null; \
+		kind load docker-image ghcr.io/$(GHCR_USER)/$$svc:preview-$$SLUG --name $(CLUSTER); \
+	done; \
+	git worktree remove --force $$WT >/dev/null 2>&1 || true; \
+	echo "✅ images preview-$$SLUG chargées — les previews peuvent démarrer"
+
 .PHONY: lint
 lint:  ## helm lint + yamllint + hadolint sur tout le repo
 	@# On lint AVEC chaque fichier de values : linter les values par défaut
@@ -197,7 +254,7 @@ NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REV:.s
 # La démo la plus lisible consiste donc à fermer / rouvrir la PR devant le formateur.
 
 .PHONY: demo-preview-open
-demo-preview-open:  ## étape 7 : (r)ouvre la PR de démo + label `preview` → la preview apparaît (~60 s)
+demo-preview-open: preview-image  ## étape 7 : (r)ouvre la PR de démo + label `preview` → la preview apparaît (~60 s)
 	-gh pr reopen $(DEMO_PR) --repo $(GH_REPO)
 	gh pr edit $(DEMO_PR) --repo $(GH_REPO) --add-label preview
 	@echo "✅ PR #$(DEMO_PR) ouverte et labellisée — l'Application annuaire-preview-* apparaît sous ~60 s"
@@ -225,8 +282,11 @@ demo-drift:  ## étape 8 : scale hors-Git → OutOfSync puis selfHeal ramène à
 
 .PHONY: demo-break
 demo-break:  ## étape 8 : pousse un image.tag inexistant → Synced + Degraded (ImagePullBackOff)
-	yq -i '(.spec.source.helm.parameters[] | select(.name == "image.tag") | .value) = "v0-nexiste-pas"' \
+	@# sed et non yq : le yq installé ici est le wrapper Python (kislyuk), dont
+	@# la sortie -y reformate le YAML et supprime tous les commentaires du fichier.
+	sed -i '' '/name: image.tag/{n;s/value: ".*"/value: "v0-nexiste-pas"/;}' \
 		platform/apps/dev/annuaire.yaml
+	@grep -A1 "name: image.tag" platform/apps/dev/annuaire.yaml
 	git add platform/apps/dev/annuaire.yaml
 	git commit -m "demo(etape 8): bump annuaire vers un tag inexistant"
 	git push
@@ -242,7 +302,8 @@ demo-rollback:  ## étape 8 : git revert du commit fautif → retour Healthy (me
 
 .PHONY: demo-hook-fail
 demo-hook-fail:  ## étape 8/9 : casse le hook PreSync → la sync est BLOQUÉE + notif on-sync-failed
-	yq -i '.migration.fail = true' annuaire-service/chart/values-dev.yaml
+	sed -i '' 's/^  fail: false$$/  fail: true/' annuaire-service/chart/values-dev.yaml
+	@grep -A1 "^migration:" annuaire-service/chart/values-dev.yaml
 	git add annuaire-service/chart/values-dev.yaml
 	git commit -m "demo(etape 8): hook PreSync en echec volontaire"
 	git push
@@ -252,7 +313,8 @@ demo-hook-fail:  ## étape 8/9 : casse le hook PreSync → la sync est BLOQUÉE 
 
 .PHONY: demo-hook-fix
 demo-hook-fix:  ## étape 8 : répare le hook PreSync (uniquement via Git)
-	yq -i '.migration.fail = false' annuaire-service/chart/values-dev.yaml
+	sed -i '' 's/^  fail: true$$/  fail: false/' annuaire-service/chart/values-dev.yaml
+	@grep -A1 "^migration:" annuaire-service/chart/values-dev.yaml
 	git add annuaire-service/chart/values-dev.yaml
 	git commit -m "demo(etape 8): repare le hook PreSync"
 	git push
@@ -280,7 +342,7 @@ demo-hook-logs:  ## étape 8 : logs du hook PreSync (doit afficher « migration 
 .PHONY: demo-syncwindow
 demo-syncwindow:  ## étape 6 bonus : montre la fenêtre de sync (deny 18h→8h en semaine)
 	@echo "──────── fenêtres déclarées sur l'AppProject devhub ────────"
-	@kubectl -n argocd get appproject devhub -o jsonpath='{.spec.syncWindows}' | yq -P
+	@kubectl -n argocd get appproject devhub -o yaml | sed -n '/syncWindows:/,/^  [a-z]/p' | head -12
 	@echo ""
 	@echo "──────── état courant vu par ArgoCD ────────"
 	@argocd proj windows list devhub 2>/dev/null || echo "(connectez-vous : argocd login argocd.devhub.local --insecure)"

@@ -12,3 +12,12 @@ env:
 pdb:
   enabled: true
   minAvailable: 1
+
+config:
+  env: dev
+
+# Hook PreSync de migration.
+# `fail` est basculé à true par `make demo-hook-fail` pour démontrer qu'un hook
+# PreSync en échec BLOQUE la phase Sync, puis remis à false par `make demo-hook-fix`.
+migration:
+  fail: false

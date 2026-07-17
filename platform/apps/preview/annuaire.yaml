@@ -50,10 +50,12 @@ spec:
           valueFiles:
             - values-preview.yaml
           parameters:
-            # TP local : on utilise l'image déjà chargée dans kind (tag `dev`).
-            # En prod, on remettrait `{{.head_short_sha}}` après push GHCR par la CI.
+            # TP local : l'image de la branche est construite et chargée dans kind
+            # par `make preview-image` sous le tag `preview-<branch_slug>`.
+            # En prod, la CI pousserait l'image sur GHCR et on utiliserait
+            # `{{.head_short_sha}}` — le mécanisme est identique.
             - name: image.tag
-              value: 'dev'
+              value: 'preview-{{.branch_slug}}'
             - name: ingress.host
               value: 'annuaire-{{.branch_slug}}.devhub.local'
       destination:
