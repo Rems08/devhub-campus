@@ -86,7 +86,7 @@ notifications:
   argocdUrl: https://argocd.devhub.local
   notifiers:
     service.webhook.webhook-site: |
-      url: https://webhook.site/REMPLACER-PAR-VOTRE-UUID
+      url: https://webhook.site/50887b53-b660-4795-8889-0a5932f5f637
       headers:
         - name: Content-Type
           value: application/json
@@ -110,7 +110,10 @@ notifications:
               "message": {{toJson .app.status.operationState.message}}
             }
   subscriptions:
+    # Le destinataire est le NOM du service (webhook-site), défini par la clé
+    # service.webhook.webhook-site ci-dessus. Écrire `webhook:webhook-site` fait
+    # chercher un service nommé « webhook » → « service not supported ».
     - recipients:
-        - webhook:webhook-site
+        - webhook-site
       triggers:
         - on-sync-failed

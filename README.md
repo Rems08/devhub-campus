@@ -84,16 +84,25 @@ plateforme à zéro.
 > `argocd app sync <app>` (`manualSync: true` l'autorise) et expliquez la
 > fenêtre — c'est un point bonus, pas une panne.
 
-## Points à finaliser avant la soutenance
+## État de préparation (fait)
 
-- [ ] **webhook.site** : remplacer `REMPLACER-PAR-VOTRE-UUID` dans
-      `platform/argocd/values.yaml` par un vrai UUID, puis
-      `make argocd-install` et `make demo-hook-fail` pour la capture d'écran
-      demandée à l'étape 9.
-- [ ] **Rotation du mot de passe admin** : `argocd account update-password`
-      (exigé par l'étape 5, à documenter dans `RAPPORT.md`).
-- [ ] **Compte `dev`** : lui donner un mot de passe pour démontrer le RBAC —
-      `argocd account update-password --account dev --new-password <...>`.
+- [x] **webhook.site** — UUID câblé dans `platform/argocd/values.yaml`,
+      notification `on-sync-failed` **testée de bout en bout** : `make
+      demo-hook-fail` fait bien arriver un POST JSON (`app`, `revision`,
+      `message`) sur webhook.site. Piège rencontré : le destinataire d'une
+      souscription est le **nom** du service (`webhook-site`), pas
+      `webhook:webhook-site`.
+- [x] **Rotation du mot de passe admin** — faite (méthode documentée dans
+      `RAPPORT.md` étape 5 ; le mot de passe lui-même n'est pas dans Git).
+- [x] **Compte `dev`** — mot de passe défini, RBAC vérifié en direct : `dev`
+      peut sync `annuaire-dev` mais reçoit `PermissionDenied` sur `planning-dev`.
+
+> **Réseau d'entreprise (Netskope).** Sur le poste MOBIVIA, l'inspection TLS
+> casse la vérif de certificat GitHub dans kind (`x509: unknown authority`) :
+> `make argocd-install` lance `make trust-ca`, qui épingle la chaîne réellement
+> présentée pour `github.com`. webhook.site est en plus **bloqué par catégorie**
+> quand Netskope est actif — il faut le désactiver (ou un réseau perso) pour
+> l'étape 9.
 
 ## Pratiques DevOps appliquées
 
