@@ -161,10 +161,13 @@ images-push: images  ## push les images sur GHCR (login préalable requis)
 	done
 
 .PHONY: images-scan
-images-scan:  ## scan trivy des 3 images (HIGH/CRITICAL bloquant)
+images-scan: images  ## scan trivy des 3 images (HIGH/CRITICAL bloquant)
+	@# dépend de `images` : sinon le tag :$(SHA) du commit courant n'existe pas
+	@# en local (les images chargées dans kind portent un SHA plus ancien) et
+	@# trivy échoue en tentant de tirer depuis GHCR.
 	@for svc in $(SERVICES); do \
 		echo ">>> trivy $$svc"; \
-		trivy image --severity HIGH,CRITICAL --exit-code 1 \
+		trivy image --severity HIGH,CRITICAL --exit-code 1 --skip-version-check \
 			--ignore-unfixed ghcr.io/$(GHCR_USER)/$$svc:$(SHA); \
 	done
 
