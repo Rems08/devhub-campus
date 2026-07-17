@@ -197,19 +197,26 @@ preview-image:  ## build les images de la branche de démo et les charge dans ki
 	@# sans ces images, les previews partent en ImagePullBackOff.
 	@# En production, la CI construirait et pousserait l'image à l'ouverture de
 	@# la PR ; ici on émule ce maillon localement.
-	@# On build depuis un worktree de la branche pour ne pas toucher à l'arbre
-	@# de travail courant — c'est bien le CODE DE LA BRANCHE qui est packagé.
+	@# On build depuis un worktree sur `origin/<branche>` (le commit RÉELLEMENT
+	@# poussé) : sinon on packagerait la branche locale, souvent en retard sur
+	@# le push. Le tag preview-<slug> étant statique, on recrée aussi les pods
+	@# de la preview pour qu'ils prennent la nouvelle image (IfNotPresent +
+	@# même tag = l'ancienne image resterait sinon).
+	@git fetch -q origin $(DEMO_BRANCH) 2>/dev/null || true
 	@SLUG=$$(echo "$(DEMO_BRANCH)" | tr '/' '-' | tr '[:upper:]' '[:lower:]'); \
-	WT=$$(mktemp -d -t preview-src.XXXXXX); rm -rf $$WT; \
-	git worktree add -f --detach $$WT $(DEMO_BRANCH) >/dev/null 2>&1 || \
+	REF=$$(git rev-parse --verify -q origin/$(DEMO_BRANCH) || git rev-parse --verify -q $(DEMO_BRANCH)) || \
 		{ echo "❌ branche $(DEMO_BRANCH) introuvable"; exit 1; }; \
+	echo "  build depuis $$REF (tip de $(DEMO_BRANCH))"; \
+	WT=$$(mktemp -d -t preview-src.XXXXXX); rm -rf $$WT; \
+	git worktree add -f --detach $$WT $$REF >/dev/null 2>&1; \
 	for svc in $(SERVICES); do \
-		echo ">>> build $$svc depuis $(DEMO_BRANCH) → tag preview-$$SLUG"; \
+		echo ">>> build $$svc → tag preview-$$SLUG"; \
 		docker build -q -t ghcr.io/$(GHCR_USER)/$$svc:preview-$$SLUG $$WT/$$svc-service >/dev/null; \
 		kind load docker-image ghcr.io/$(GHCR_USER)/$$svc:preview-$$SLUG --name $(CLUSTER); \
 	done; \
 	git worktree remove --force $$WT >/dev/null 2>&1 || true; \
-	echo "✅ images preview-$$SLUG chargées — les previews peuvent démarrer"
+	kubectl -n devhub-preview-$$SLUG delete pod --all --ignore-not-found >/dev/null 2>&1 || true; \
+	echo "✅ images preview-$$SLUG (re)chargées + pods recyclés — la preview sert le commit courant"
 
 .PHONY: lint
 lint:  ## helm lint + yamllint + hadolint sur tout le repo

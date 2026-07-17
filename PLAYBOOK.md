@@ -207,6 +207,26 @@ watch kubectl -n argocd get applications      # à laisser tourner pendant l'att
 Dans le repo : `platform/apps/preview/*.yaml` (generator, prune, CreateNamespace,
 `branch_slug`, label `devhub.io/env: preview`).
 
+### Mettre à jour une preview après un **nouveau commit** sur la branche
+
+> **Piège** : ArgoCD re-synchronise les *manifestes* du nouveau commit, mais le
+> message de `/healthz` est **dans l'image**, pas dans un manifeste. Or le tag
+> d'image de preview est **statique** (`preview-<slug>`) : tant qu'on ne
+> reconstruit pas l'image, le pod sert l'ancien code (`imagePullPolicy:
+> IfNotPresent`). En prod, la CI construirait une image par commit — ici on
+> émule ce maillon à la main.
+
+```sh
+# après avoir poussé ton commit sur la branche :
+make preview-image        # fetch origin/<branche> + rebuild image + reload kind + recycle les pods
+sleep 20
+curl -s http://annuaire-feature-demo-prof.devhub.local/healthz   # → nouveau contenu
+```
+
+`make preview-image` construit désormais depuis **`origin/<branche>`** (le commit
+réellement poussé, pas la branche locale qui peut être en retard) et **recrée les
+pods** de la preview. C'est le seul geste à refaire à chaque commit de démo.
+
 ---
 
 ## Critère 6 — Bestiaire ArgoCD : drift / rollback / hooks / waves (12 %)
